@@ -1,0 +1,208 @@
+module Main exposing (main)
+
+import Browser
+import Dict exposing (Dict)
+import Html exposing (Html)
+import Svg as S
+import Svg.Attributes as SA
+
+
+
+-- model ----------------------------------------------------------------------
+
+
+main =
+    Browser.document { init = init, update = update, view = view, subscriptions = subscriptions }
+
+
+type alias Model =
+    { tasks : List Task
+    }
+
+
+type alias Task =
+    { id : TaskId
+    , dependsOn : List TaskId
+    , color : String
+    , start : Int
+    , length : Int
+    }
+
+
+type alias TaskId =
+    String
+
+
+type alias DrawableTask =
+    { id : TaskId, col : Col, row : Row, len : Int, color : String }
+
+
+type alias Col =
+    Int
+
+
+type alias Row =
+    Int
+
+
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( Model initTask, Cmd.none )
+
+
+initTask : List Task
+initTask =
+    let
+        t1 =
+            Task "task1" [] "grey" 1 2
+
+        t2 =
+            Task "task2" [ "task1" ] "fuchsia" 3 2
+
+        t3 =
+            Task "task3" [ "task1" ] "orange" 3 2
+
+        t4 =
+            -- Note that this solution would render the same image if task4 would depend on task2 instead of task3
+            Task "task4" [ "task3" ] "navy" 5 2
+
+        t5 =
+            Task "task5" [ "task2", "task4" ] "lightskyblue" 8 3
+    in
+    [ t1, t5, t4, t2, t3 ]
+
+
+
+-- subscription ---------------------------------------------------------------
+
+
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    Sub.none
+
+
+
+-- update ---------------------------------------------------------------------
+
+
+type Msg
+    = NoOp
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    ( model, Cmd.none )
+
+
+
+-- view frame -----------------------------------------------------------------
+
+
+type alias Document msg =
+    { title : String
+    , body : List (Html msg)
+    }
+
+
+view : Model -> Document Msg
+view model =
+    { title = "DIJIT"
+    , body = [ viewGantt model.tasks ]
+    }
+
+
+
+-- view gantt -----------------------------------------------------------------
+
+
+viewGantt : List Task -> Html Msg
+viewGantt tasks =
+    Html.div []
+        [ S.svg [ SA.viewBox "0 0 100% 100%", SA.width "100%", SA.height "100%" ] <|
+            List.map viewTask <|
+                toDrawableListOfTasks tasks
+        ]
+
+
+viewTask : DrawableTask -> S.Svg Msg
+viewTask task =
+    let
+        x =
+            String.fromInt ((task.col * 70) + 5)
+
+        y =
+            String.fromInt ((task.row * (15 + 5)) + 5)
+        
+        w =
+            String.fromInt ((task.len *70) + 5)
+    in
+    S.rect [ SA.x x, SA.y y, SA.width w, SA.height "15", SA.fill task.color ] []
+
+
+
+-- transform list of tasks to a drawable list of tasks ------------------------
+
+
+toDrawableListOfTasks : List Task -> List DrawableTask
+toDrawableListOfTasks tasks =
+    order initTemp tasks
+
+
+{-| This stores the partial list of gantt tasks that can already be drawn
+-}
+type alias Temp =
+    Dict TaskId DrawableTask
+
+
+initTemp =
+    Dict.empty
+
+
+order : Temp -> List Task -> List DrawableTask
+order temp todo =
+    case List.partition (allDependenciesMet temp) todo of
+        ( [], [] ) ->
+            -- We are done and can return the list
+            Dict.values temp
+                |> List.sortBy .row
+
+        ( [], _ ) ->
+            Debug.todo "An invalid list of tasks was passed"
+
+        ( drawableTasks, nextTodo ) ->
+            let
+                nextTemp =
+                    List.indexedMap (toDrawable temp) drawableTasks
+                        |> List.map (\t -> ( t.id, t ))
+                        |> Dict.fromList
+                        |> Dict.union temp
+            in
+            order nextTemp nextTodo
+
+
+{-| Returns true if all tasks that need to be rendered above this one exist in temp
+-}
+allDependenciesMet : Temp -> Task -> Bool
+allDependenciesMet temp task =
+    List.all (\id -> Dict.member id temp) task.dependsOn
+
+
+toDrawable : Temp -> Int -> Task -> DrawableTask
+toDrawable temp index task =
+    { id = task.id
+    --, col = getColumn temp task
+    , col = task.start
+    , row = Dict.size temp + index
+    , len = task.length
+    , color = task.color
+    }
+
+
+getColumn : Temp -> Task -> Col
+getColumn temp task =
+    List.filterMap
+        (\id -> Dict.get id temp |> Maybe.map (\p -> p.col + 1))
+        task.dependsOn
+        |> List.maximum
+        |> Maybe.withDefault 0
+
